@@ -233,3 +233,105 @@ def test_execute_agent_task_marks_unsupported_as_failed(db, test_user):
     )
 
     assert result.status == "failed"
+
+
+def test_execute_agent_task_is_case_insensitive(db, test_user):
+    channel_name = f"support-{uuid4().hex[:8]}"
+
+    task = AgentTask(
+        instruction=f"CREATE A CHANNEL CALLED {channel_name}.",
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    result = execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    assert result.status == "completed"
+
+    channel = db.query(Channel).filter(
+        Channel.name == channel_name
+    ).first()
+
+    assert channel is not None
+
+
+def test_execute_agent_task_strips_instruction_whitespace(
+    db,
+    test_user,
+):
+    channel_name = f"qa-{uuid4().hex[:8]}"
+
+    task = AgentTask(
+        instruction=f"   Create a channel called {channel_name}.   ",
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    result = execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    assert result.status == "completed"
+
+    channel = db.query(Channel).filter(
+        Channel.name == channel_name
+    ).first()
+
+    assert channel is not None
+
+
+def test_execute_agent_task_channel_and_message_case_insensitive(
+    db,
+    test_user,
+):
+    channel_name = f"deployments-{uuid4().hex[:8]}"
+    message_content = "Deployment completed."
+
+    task = AgentTask(
+        instruction=(
+            f"CREATE A CHANNEL CALLED {channel_name} "
+            f"AND SEND THE MESSAGE {message_content}"
+        ),
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    result = execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    assert result.status == "completed"
+
+    channel = db.query(Channel).filter(
+        Channel.name == channel_name
+    ).first()
+
+    assert channel is not None
+
+    message = db.query(Message).filter(
+        Message.channel_id == channel.id,
+        Message.user_id == test_user.id,
+        Message.content == message_content,
+    ).first()
+
+    assert message is not None
