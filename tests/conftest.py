@@ -1,7 +1,11 @@
 import pytest
 from uuid import uuid4
 
+from fastapi.testclient import TestClient
+
+from app.auth import create_access_token
 from app.database import SessionLocal
+from app.main import app
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
 from app.models.user import User
@@ -16,6 +20,11 @@ def db():
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
 
 
 @pytest.fixture
@@ -44,6 +53,23 @@ def test_user(db):
 
     db.delete(user)
     db.commit()
+
+
+@pytest.fixture
+def authenticated_client(test_user):
+    token = create_access_token(
+        data={
+            "sub": str(test_user.id),
+        }
+    )
+
+    client = TestClient(app)
+
+    client.headers.update({
+        "Authorization": f"Bearer {token}"
+    })
+
+    return client
 
 
 @pytest.fixture

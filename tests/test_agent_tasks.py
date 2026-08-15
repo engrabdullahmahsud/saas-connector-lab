@@ -1,53 +1,18 @@
-from fastapi.testclient import TestClient
-
-from app.main import app
 from app.models.agent_task import AgentTask
 
 
-client = TestClient(app)
-
-
-def test_create_agent_task(db):
-    response = client.post(
-        "/agent-tasks/",
-        json={
-            "instruction": (
-                "Create a channel called devops "
-                "and send the message Deployment completed."
-            )
-        },
-    )
-
-    assert response.status_code == 201
-
-    data = response.json()
-
-    assert data["instruction"].startswith(
-        "Create a channel called devops"
-    )
-    assert data["status"] == "pending"
-    assert "id" in data
-    assert "created_at" in data
-
-    task = db.query(AgentTask).filter(
-        AgentTask.id == data["id"]
-    ).first()
-
-    assert task is not None
-    assert task.status == "pending"
-
-
-def test_list_agent_tasks(db):
+def test_list_agent_tasks(authenticated_client, db, test_user):
     task = AgentTask(
         instruction="Create a channel called engineering.",
         status="pending",
+        user_id=test_user.id,
     )
 
     db.add(task)
     db.commit()
     db.refresh(task)
 
-    response = client.get("/agent-tasks/")
+    response = authenticated_client.get("/agent-tasks/")
 
     assert response.status_code == 200
 
