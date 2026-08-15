@@ -79,6 +79,29 @@ def execute_agent_task(
 ) -> AgentTask:
     instruction = task.instruction.strip()
 
+    quoted_message_match = re.fullmatch(
+        r'Create a channel called (.+?) and send the message ["\'](.+?)["\']',
+        instruction,
+        re.IGNORECASE,
+    )
+
+    if quoted_message_match:
+        channel_name = quoted_message_match.group(1).strip()
+        message_content = quoted_message_match.group(2).strip()
+
+        execute_create_channel_and_send_message(
+            db=db,
+            user=user,
+            channel_name=channel_name,
+            message_content=message_content,
+        )
+
+        task.status = "completed"
+        db.commit()
+        db.refresh(task)
+
+        return task
+
     message_match = re.fullmatch(
         r"Create a channel called (.+?) and send the message (.+)",
         instruction,

@@ -335,3 +335,43 @@ def test_execute_agent_task_channel_and_message_case_insensitive(
     ).first()
 
     assert message is not None
+
+
+def test_execute_agent_task_with_quoted_message(db, test_user):
+    channel_name = f"deployments-{uuid4().hex[:8]}"
+    message_content = "Deployment completed successfully."
+
+    task = AgentTask(
+        instruction=(
+            f'Create a channel called {channel_name} '
+            f'and send the message "{message_content}"'
+        ),
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    result = execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    assert result.status == "completed"
+
+    channel = db.query(Channel).filter(
+        Channel.name == channel_name
+    ).first()
+
+    assert channel is not None
+
+    message = db.query(Message).filter(
+        Message.channel_id == channel.id,
+        Message.user_id == test_user.id,
+        Message.content == message_content,
+    ).first()
+
+    assert message is not None
