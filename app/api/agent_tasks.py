@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models.agent_task import AgentTask
 from app.models.user import User
 from app.schemas.agent_task import AgentTaskCreate, AgentTaskResponse
+from app.services.agent_executor import execute_agent_task
 
 
 router = APIRouter(
@@ -34,7 +35,11 @@ def create_agent_task(
     db.commit()
     db.refresh(db_task)
 
-    return db_task
+    return execute_agent_task(
+        db=db,
+        task=db_task,
+        user=current_user,
+    )
 
 
 @router.get(
@@ -59,6 +64,7 @@ from app.database import get_db
 from app.models.agent_task import AgentTask
 from app.models.user import User
 from app.schemas.agent_task import AgentTaskCreate, AgentTaskResponse
+from app.services.agent_executor import execute_agent_task
 
 
 router = APIRouter(
@@ -87,7 +93,11 @@ def create_agent_task(
     db.commit()
     db.refresh(db_task)
 
-    return db_task
+    return execute_agent_task(
+        db=db,
+        task=db_task,
+        user=current_user,
+    )
 
 
 @router.get(
