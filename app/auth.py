@@ -17,21 +17,13 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY")
 
 if not SECRET_KEY:
-    raise RuntimeError(
-        "SECRET_KEY is not configured"
-    )
+    raise RuntimeError("SECRET_KEY is not configured")
 
 
-ALGORITHM = os.getenv(
-    "JWT_ALGORITHM",
-    "HS256",
-)
+ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(
-    os.getenv(
-        "ACCESS_TOKEN_EXPIRE_MINUTES",
-        "30",
-    )
+    os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
 )
 
 
@@ -51,9 +43,7 @@ def create_access_token(
             minutes=ACCESS_TOKEN_EXPIRE_MINUTES
         )
 
-    to_encode.update(
-        {"exp": expire}
-    )
+    to_encode.update({"exp": expire})
 
     return jwt.encode(
         to_encode,
@@ -84,9 +74,7 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
-            headers={
-                "WWW-Authenticate": "Bearer",
-            },
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     user_id = payload.get("sub")
@@ -95,9 +83,7 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
-            headers={
-                "WWW-Authenticate": "Bearer",
-            },
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     try:
@@ -106,9 +92,7 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
-            headers={
-                "WWW-Authenticate": "Bearer",
-            },
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     user = db.query(User).filter(
@@ -119,9 +103,7 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
-            headers={
-                "WWW-Authenticate": "Bearer",
-            },
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     return user
