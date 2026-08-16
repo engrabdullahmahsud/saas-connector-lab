@@ -24,3 +24,8 @@ app.include_router(agent_tasks_router)
 @app.get("/")
 def root():
     return {"message": "SaaS Connector Lab is running"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
