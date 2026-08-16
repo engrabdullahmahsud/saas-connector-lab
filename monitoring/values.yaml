@@ -1,0 +1,10 @@
+grafana:
+  service:
+    type: ClusterIP
+
+nodeExporter:
+  enabled: false
+
+prometheus:
+  service:
+    type: ClusterIP
