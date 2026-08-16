@@ -63,7 +63,10 @@ def execute_create_channel(
 ) -> Channel:
     existing_channel = (
         db.query(Channel)
-        .filter(Channel.name == channel_name)
+        .filter(
+            Channel.name == channel_name,
+            Channel.created_by == user.id,
+        )
         .first()
     )
 
@@ -112,13 +115,25 @@ def execute_create_channel_and_send_message(
         channel_name=channel_name,
     )
 
-    message = Message(
-        content=message_content,
-        user_id=user.id,
-        channel_id=channel.id,
+    existing_message = (
+        db.query(Message)
+        .filter(
+            Message.channel_id == channel.id,
+            Message.user_id == user.id,
+            Message.content == message_content,
+        )
+        .first()
     )
 
-    db.add(message)
+    if existing_message is None:
+        db.add(
+            Message(
+                content=message_content,
+                user_id=user.id,
+                channel_id=channel.id,
+            )
+        )
+
     db.commit()
     db.refresh(channel)
 
@@ -130,9 +145,6 @@ def execute_agent_task(
     task: AgentTask,
     user: User,
 ) -> AgentTask:
-    if task.status == "completed":
-        return task
-
     parsed_action = parse_agent_instruction(
         task.instruction
     )
@@ -150,8 +162,6 @@ def execute_agent_task(
             user=user,
             channel_name=parsed_action.channel_name,
         )
-
-        db.commit()
 
         task.status = "completed"
         db.commit()

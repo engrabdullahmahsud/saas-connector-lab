@@ -298,6 +298,58 @@ def test_execute_agent_task_with_quoted_message(
     assert message is not None
 
 
+def test_execute_agent_task_is_idempotent_for_channel_and_message(
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction=(
+            'Create a channel called Engineering and '
+            'send the message "Deployment completed"'
+        ),
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    message_count_before = (
+        db.query(Message)
+        .filter(
+            Message.user_id == test_user.id,
+            Message.content == "Deployment completed",
+        )
+        .count()
+    )
+
+    execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    message_count_after = (
+        db.query(Message)
+        .filter(
+            Message.user_id == test_user.id,
+            Message.content == "Deployment completed",
+        )
+        .count()
+    )
+
+    assert message_count_before == 1
+    assert message_count_after == 1
+
+
+
 def test_execute_agent_task_endpoint(
     client,
     auth_headers,
