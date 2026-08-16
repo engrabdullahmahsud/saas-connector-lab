@@ -130,6 +130,9 @@ def execute_agent_task(
     task: AgentTask,
     user: User,
 ) -> AgentTask:
+    if task.status == "completed":
+        return task
+
     parsed_action = parse_agent_instruction(
         task.instruction
     )

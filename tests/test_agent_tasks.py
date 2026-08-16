@@ -418,7 +418,7 @@ def test_evaluate_agent_task_passes_when_channel_and_message_exist(
             'Create a channel called Engineering and '
             'send the message "Deployment completed"'
         ),
-        status="completed",
+        status="pending",
         user_id=test_user.id,
     )
 
@@ -702,3 +702,270 @@ def test_evaluation_deleted_with_task(
     )
 
     assert remaining is None
+
+
+def test_list_task_evaluations_returns_history(
+    client,
+    auth_headers,
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    execute_create_channel(
+        db=db,
+        user=test_user,
+        channel_name="Engineering",
+    )
+
+    first = evaluate_agent_task(db=db, task=task)
+    second = evaluate_agent_task(db=db, task=task)
+
+    response = client.get(
+        f"/agent-tasks/{task.id}/evaluations",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert data[0]["id"] > data[1]["id"]
+    assert data[0]["task_id"] == task.id
+    assert data[0]["result"] == second["result"]
+    assert data[1]["result"] == first["result"]
+
+
+def test_list_task_evaluations_returns_empty_history(
+    client,
+    auth_headers,
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    response = client.get(
+        f"/agent-tasks/{task.id}/evaluations",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_task_evaluations_not_found(
+    client,
+    auth_headers,
+):
+    response = client.get(
+        "/agent-tasks/999999/evaluations",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 404
+
+
+def test_list_task_evaluations_blocks_other_user(
+    client,
+    second_auth_headers,
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    response = client.get(
+        f"/agent-tasks/{task.id}/evaluations",
+        headers=second_auth_headers,
+    )
+
+    assert response.status_code == 404
+
+
+def test_list_task_evaluations_supports_limit_and_offset(
+    client,
+    auth_headers,
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    execute_create_channel(
+        db=db,
+        user=test_user,
+        channel_name="Engineering",
+    )
+
+    evaluate_agent_task(db=db, task=task)
+    evaluate_agent_task(db=db, task=task)
+    evaluate_agent_task(db=db, task=task)
+
+    response = client.get(
+        f"/agent-tasks/{task.id}/evaluations?limit=2&offset=1",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 2
+    assert data[0]["id"] > data[1]["id"]
+
+
+def test_list_task_evaluations_rejects_invalid_pagination(
+    client,
+    auth_headers,
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    response = client.get(
+        f"/agent-tasks/{task.id}/evaluations?limit=0",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+
+    response = client.get(
+        f"/agent-tasks/{task.id}/evaluations?offset=-1",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+
+
+def test_execute_agent_task_does_not_rerun_completed_channel_task(
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    first = execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    channel_count_before = (
+        db.query(Channel)
+        .filter(Channel.name == "Engineering")
+        .count()
+    )
+
+    second = execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    channel_count_after = (
+        db.query(Channel)
+        .filter(Channel.name == "Engineering")
+        .count()
+    )
+
+    assert first.status == "completed"
+    assert second.status == "completed"
+    assert channel_count_before == 1
+    assert channel_count_after == 1
+
+
+def test_execute_agent_task_does_not_duplicate_completed_message_task(
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction=(
+            'Create a channel called Engineering and '
+            'send the message "Deployment completed"'
+        ),
+        status="pending",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    message_count_before = (
+        db.query(Message)
+        .filter(
+            Message.user_id == test_user.id,
+            Message.content == "Deployment completed",
+        )
+        .count()
+    )
+
+    execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
+    )
+
+    message_count_after = (
+        db.query(Message)
+        .filter(
+            Message.user_id == test_user.id,
+            Message.content == "Deployment completed",
+        )
+        .count()
+    )
+
+    assert message_count_before == 1
+    assert message_count_after == 1

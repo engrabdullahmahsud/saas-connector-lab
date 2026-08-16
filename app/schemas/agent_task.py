@@ -26,3 +26,13 @@ class AgentTaskEvaluationResponse(BaseModel):
     task_id: int
     result: str
     checks: AgentTaskEvaluationChecks
+
+
+class AgentTaskEvaluationHistoryResponse(BaseModel):
+    id: int
+    task_id: int
+    result: str
+    checks: dict
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
