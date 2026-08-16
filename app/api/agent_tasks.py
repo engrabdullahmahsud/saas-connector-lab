@@ -5,8 +5,13 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models.agent_task import AgentTask
 from app.models.user import User
-from app.schemas.agent_task import AgentTaskCreate, AgentTaskResponse
+from app.schemas.agent_task import (
+    AgentTaskCreate,
+    AgentTaskEvaluationResponse,
+    AgentTaskResponse,
+)
 from app.services.agent_executor import execute_agent_task
+from app.services.task_evaluator import evaluate_agent_task
 
 
 router = APIRouter(
@@ -66,10 +71,46 @@ def execute_task(
             detail="Agent task not found",
         )
 
+    if task.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Agent task is already completed",
+        )
+
     return execute_agent_task(
         db=db,
         task=task,
         user=current_user,
+    )
+
+
+@router.post(
+    "/{task_id}/evaluate",
+    response_model=AgentTaskEvaluationResponse,
+)
+def evaluate_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = (
+        db.query(AgentTask)
+        .filter(
+            AgentTask.id == task_id,
+            AgentTask.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent task not found",
+        )
+
+    return evaluate_agent_task(
+        db=db,
+        task=task,
     )
 
 

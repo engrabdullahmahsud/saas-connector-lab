@@ -7,7 +7,14 @@ from sqlalchemy import pool
 from dotenv import load_dotenv
 
 from app.database import Base
-from app.models import User, Channel, ChannelMember, Message
+from app.models import (
+    User,
+    Channel,
+    ChannelMember,
+    Message,
+    AgentTask,
+    TaskEvaluation,
+)
 
 
 load_dotenv()

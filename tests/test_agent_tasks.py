@@ -488,3 +488,336 @@ def test_execute_agent_task_endpoint_blocks_other_user(
     assert all(item["user_id"] == test_user.id for item in data)
     assert not any(item["id"] == task.id for item in data)
 
+
+
+def test_execute_agent_task_endpoint_rejects_completed_task(
+    authenticated_client,
+    db,
+    test_user,
+):
+    channel_name = f"repeat-{uuid4().hex[:8]}"
+
+    task = AgentTask(
+        instruction=f"Create a channel called {channel_name}.",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    response = authenticated_client.post(
+        f"/agent-tasks/{task.id}/execute"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Agent task is already completed"
+
+
+def test_evaluate_agent_task_passes_when_channel_and_message_exist(
+    db,
+    test_user,
+):
+    from app.services.task_evaluator import evaluate_agent_task
+
+    channel_name = f"eval-{uuid4().hex[:8]}"
+    message_content = "Deployment complete."
+
+    task = AgentTask(
+        instruction=(
+            f'Create a channel called {channel_name} '
+            f'and send the message "{message_content}"'
+        ),
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    channel = Channel(
+        name=channel_name,
+        description="Evaluation test",
+        created_by=test_user.id,
+    )
+
+    db.add(channel)
+    db.commit()
+    db.refresh(channel)
+
+    membership = ChannelMember(
+        user_id=test_user.id,
+        channel_id=channel.id,
+    )
+
+    db.add(membership)
+    db.commit()
+
+    message = Message(
+        content=message_content,
+        user_id=test_user.id,
+        channel_id=channel.id,
+    )
+
+    db.add(message)
+    db.commit()
+
+    result = evaluate_agent_task(
+        db=db,
+        task=task,
+    )
+
+    assert result["result"] == "PASS"
+    assert result["checks"]["channel_created"] is True
+    assert result["checks"]["message_created"] is True
+
+
+def test_evaluate_agent_task_fails_when_nothing_was_created(
+    db,
+    test_user,
+):
+    from app.services.task_evaluator import evaluate_agent_task
+
+    channel_name = f"missing-{uuid4().hex[:8]}"
+
+    task = AgentTask(
+        instruction=f"Create a channel called {channel_name}.",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    result = evaluate_agent_task(
+        db=db,
+        task=task,
+    )
+
+    assert result["result"] == "FAIL"
+    assert result["checks"]["channel_created"] is False
+    assert result["checks"]["channel_member"] is False
+
+
+def test_evaluate_agent_task_returns_partial_when_message_is_missing(
+    db,
+    test_user,
+):
+    from app.services.task_evaluator import evaluate_agent_task
+
+    channel_name = f"partial-{uuid4().hex[:8]}"
+    message_content = "Deployment complete."
+
+    task = AgentTask(
+        instruction=(
+            f'Create a channel called {channel_name} '
+            f'and send the message "{message_content}"'
+        ),
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    channel = Channel(
+        name=channel_name,
+        description="Partial evaluation test",
+        created_by=test_user.id,
+    )
+
+    db.add(channel)
+    db.commit()
+
+    result = evaluate_agent_task(
+        db=db,
+        task=task,
+    )
+
+    assert result["result"] == "PARTIAL"
+    assert result["checks"]["channel_created"] is True
+    assert result["checks"]["message_created"] is False
+
+
+def test_evaluate_agent_task_endpoint(
+    authenticated_client,
+    db,
+    test_user,
+):
+    channel_name = f"api-eval-{uuid4().hex[:8]}"
+    message_content = "Deployment complete."
+
+    task = AgentTask(
+        instruction=(
+            f'Create a channel called {channel_name} '
+            f'and send the message "{message_content}"'
+        ),
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    channel = Channel(
+        name=channel_name,
+        description="API evaluation test",
+        created_by=test_user.id,
+    )
+
+    db.add(channel)
+    db.commit()
+    db.refresh(channel)
+
+    membership = ChannelMember(
+        user_id=test_user.id,
+        channel_id=channel.id,
+    )
+
+    db.add(membership)
+    db.commit()
+
+    message = Message(
+        content=message_content,
+        user_id=test_user.id,
+        channel_id=channel.id,
+    )
+
+    db.add(message)
+    db.commit()
+
+    response = authenticated_client.post(
+        f"/agent-tasks/{task.id}/evaluate"
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["task_id"] == task.id
+    assert data["result"] == "PASS"
+    assert data["checks"]["channel_created"] is True
+    assert data["checks"]["message_created"] is True
+
+
+def test_evaluate_agent_task_endpoint_blocks_other_user(
+    authenticated_client,
+    db,
+    test_user,
+):
+    other_user = User(
+        username=f"evalother_{uuid4().hex[:8]}",
+        email=f"evalother-{uuid4().hex[:8]}@example.com",
+        password_hash=hash_password("password123"),
+    )
+
+    db.add(other_user)
+    db.commit()
+    db.refresh(other_user)
+
+    task = AgentTask(
+        instruction="Create a channel called private-eval.",
+        status="completed",
+        user_id=other_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    response = authenticated_client.post(
+        f"/agent-tasks/{task.id}/evaluate"
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Agent task not found"
+
+
+def test_evaluate_agent_task_does_not_accept_channel_owned_by_other_user(
+    db,
+    test_user,
+):
+    from app.services.task_evaluator import evaluate_agent_task
+
+    other_user = User(
+        username=f"ownercheck_{uuid4().hex[:8]}",
+        email=f"ownercheck-{uuid4().hex[:8]}@example.com",
+        password_hash=hash_password("password123"),
+    )
+
+    db.add(other_user)
+    db.commit()
+    db.refresh(other_user)
+
+    channel_name = f"ownership-{uuid4().hex[:8]}"
+
+    task = AgentTask(
+        instruction=f"Create a channel called {channel_name}.",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    channel = Channel(
+        name=channel_name,
+        description="Wrong owner",
+        created_by=other_user.id,
+    )
+
+    db.add(channel)
+    db.commit()
+
+    result = evaluate_agent_task(
+        db=db,
+        task=task,
+    )
+
+    assert result["result"] == "FAIL"
+    assert result["checks"]["channel_created"] is False
+    assert result["checks"]["channel_member"] is False
+
+
+def test_evaluate_agent_task_requires_channel_membership(
+    db,
+    test_user,
+):
+    from app.services.task_evaluator import evaluate_agent_task
+
+    channel_name = f"membership-{uuid4().hex[:8]}"
+
+    task = AgentTask(
+        instruction=f"Create a channel called {channel_name}.",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    channel = Channel(
+        name=channel_name,
+        description="Membership evaluation test",
+        created_by=test_user.id,
+    )
+
+    db.add(channel)
+    db.commit()
+    db.refresh(channel)
+
+    result = evaluate_agent_task(
+        db=db,
+        task=task,
+    )
+
+    assert result["result"] == "PARTIAL"
+    assert result["checks"]["channel_created"] is True
+    assert result["checks"]["channel_member"] is False

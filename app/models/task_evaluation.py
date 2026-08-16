@@ -6,22 +6,27 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 
-class AgentTask(Base):
-    __tablename__ = "agent_tasks"
+class TaskEvaluation(Base):
+    __tablename__ = "task_evaluations"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    instruction = Column(Text, nullable=False)
-
-    status = Column(
-        String(20),
+    task_id = Column(
+        Integer,
+        ForeignKey(
+            "agent_tasks.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
-        default="pending",
     )
 
-    user_id = Column(
-        Integer,
-        ForeignKey("users.id"),
+    result = Column(
+        String(20),
+        nullable=False,
+    )
+
+    checks = Column(
+        Text,
         nullable=False,
     )
 
@@ -31,14 +36,7 @@ class AgentTask(Base):
         nullable=False,
     )
 
-    user = relationship(
-        "User",
-        back_populates="agent_tasks",
-    )
-
-    evaluations = relationship(
-        "TaskEvaluation",
-        back_populates="task",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
+    task = relationship(
+        "AgentTask",
+        back_populates="evaluations",
     )

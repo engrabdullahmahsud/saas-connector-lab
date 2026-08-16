@@ -15,3 +15,14 @@ class AgentTaskResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AgentTaskEvaluationChecks(BaseModel):
+    channel_created: bool = False
+    message_created: bool = False
+
+
+class AgentTaskEvaluationResponse(BaseModel):
+    task_id: int
+    result: str
+    checks: AgentTaskEvaluationChecks
