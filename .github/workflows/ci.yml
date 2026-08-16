@@ -61,7 +61,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5433/saas_connector
           REDIS_URL: redis://localhost:6379/0
-          SECRET_KEY: ci-test-secret-key
+          SECRET_KEY: ci-test-secret-key-for-github-actions-2026
           JWT_ALGORITHM: HS256
           ACCESS_TOKEN_EXPIRE_MINUTES: 30
         run: |
