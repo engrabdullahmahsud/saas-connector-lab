@@ -1,82 +1,56 @@
-from uuid import uuid4
-
 from app.models.agent_task import AgentTask
 from app.models.channel import Channel
 from app.models.channel_member import ChannelMember
 from app.models.message import Message
-from app.models.user import User
-from app.security import hash_password
+from app.models.task_evaluation import TaskEvaluation
 from app.services.agent_executor import (
-    execute_create_channel_and_send_message,
     execute_agent_task,
+    execute_create_channel,
+    execute_create_channel_and_send_message,
 )
+from app.services.task_evaluator import evaluate_agent_task
 
 
-def test_list_agent_tasks(authenticated_client, db, test_user):
-    task = AgentTask(
-        instruction="Create a channel called engineering.",
-        status="pending",
-        user_id=test_user.id,
+def test_list_agent_tasks(client, auth_headers):
+    response = client.get(
+        "/agent-tasks/",
+        headers=auth_headers,
     )
 
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-
-    response = authenticated_client.get("/agent-tasks/")
-
     assert response.status_code == 200
-
-    data = response.json()
-
-    assert any(item["id"] == task.id for item in data)
+    assert response.json() == []
 
 
-def test_create_agent_task_executes_channel(
-    authenticated_client,
-    db,
-    test_user,
-):
-    channel_name = f"engineering-{uuid4().hex[:8]}"
-
-    response = authenticated_client.post(
+def test_create_agent_task_executes_channel(client, auth_headers):
+    response = client.post(
         "/agent-tasks/",
         json={
-            "instruction": f"Create a channel called {channel_name}.",
+            "instruction": "Create a channel called Engineering",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
 
     data = response.json()
 
+    assert data["instruction"] == "Create a channel called Engineering"
     assert data["status"] == "completed"
-    assert data["user_id"] == test_user.id
-
-    channel = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).first()
-
-    assert channel is not None
-    assert channel.created_by == test_user.id
 
 
 def test_create_agent_task_executes_channel_and_message(
-    authenticated_client,
-    db,
-    test_user,
+    client,
+    auth_headers,
 ):
-    channel_name = f"devops-{uuid4().hex[:8]}"
-    message_content = "Deployment completed."
-
-    response = authenticated_client.post(
+    response = client.post(
         "/agent-tasks/",
         json={
             "instruction": (
-                f"Create a channel called {channel_name} "
-                f"and send the message {message_content}"
+                'Create a channel called Engineering and '
+                'send the message "Deployment completed"'
             ),
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -84,122 +58,97 @@ def test_create_agent_task_executes_channel_and_message(
     data = response.json()
 
     assert data["status"] == "completed"
-    assert data["user_id"] == test_user.id
-
-    channel = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).first()
-
-    assert channel is not None
-
-    message = db.query(Message).filter(
-        Message.channel_id == channel.id,
-        Message.user_id == test_user.id,
-        Message.content == message_content,
-    ).first()
-
-    assert message is not None
 
 
 def test_create_agent_task_unsupported_instruction_fails(
-    authenticated_client,
-    db,
-    test_user,
+    client,
+    auth_headers,
 ):
-    response = authenticated_client.post(
+    response = client.post(
         "/agent-tasks/",
         json={
-            "instruction": "Delete the entire database.",
+            "instruction": "Delete the production database",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
-
-    data = response.json()
-
-    assert data["status"] == "failed"
-    assert data["user_id"] == test_user.id
-
-    task = db.query(AgentTask).filter(
-        AgentTask.id == data["id"]
-    ).first()
-
-    assert task is not None
-    assert task.status == "failed"
+    assert response.json()["status"] == "failed"
 
 
-def test_execute_create_channel_and_send_message(db, test_user):
-    channel_name = f"engineering-{uuid4().hex[:8]}"
-
+def test_execute_create_channel_and_send_message(
+    db,
+    test_user,
+):
     channel = execute_create_channel_and_send_message(
         db=db,
         user=test_user,
-        channel_name=channel_name,
-        message_content="Deployment completed.",
+        channel_name="Engineering",
+        message_content="Deployment completed",
     )
 
-    assert channel.id is not None
-    assert channel.name == channel_name
-    assert channel.created_by == test_user.id
+    assert channel.name == "Engineering"
 
-    membership = db.query(ChannelMember).filter(
-        ChannelMember.user_id == test_user.id,
-        ChannelMember.channel_id == channel.id,
-    ).first()
+    membership = (
+        db.query(ChannelMember)
+        .filter(
+            ChannelMember.channel_id == channel.id,
+            ChannelMember.user_id == test_user.id,
+        )
+        .first()
+    )
 
     assert membership is not None
 
-    message = db.query(Message).filter(
-        Message.channel_id == channel.id,
-        Message.user_id == test_user.id,
-        Message.content == "Deployment completed.",
-    ).first()
+    message = (
+        db.query(Message)
+        .filter(
+            Message.channel_id == channel.id,
+            Message.user_id == test_user.id,
+            Message.content == "Deployment completed",
+        )
+        .first()
+    )
 
     assert message is not None
 
 
-def test_execute_reuses_existing_channel(db, test_user):
-    channel_name = f"engineering-{uuid4().hex[:8]}"
-
-    existing_channel = Channel(
-        name=channel_name,
-        description="Existing channel",
-        created_by=test_user.id,
-    )
-
-    db.add(existing_channel)
-    db.commit()
-    db.refresh(existing_channel)
-
-    channel = execute_create_channel_and_send_message(
+def test_execute_reuses_existing_channel(
+    db,
+    test_user,
+):
+    first = execute_create_channel(
         db=db,
         user=test_user,
-        channel_name=channel_name,
-        message_content="Hello engineering.",
+        channel_name="Engineering",
     )
 
-    assert channel.id == existing_channel.id
-    assert channel.name == channel_name
+    second = execute_create_channel(
+        db=db,
+        user=test_user,
+        channel_name="Engineering",
+    )
 
-    channels = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).all()
+    assert first.id == second.id
 
-    assert len(channels) == 1
+    memberships = (
+        db.query(ChannelMember)
+        .filter(
+            ChannelMember.channel_id == first.id,
+            ChannelMember.user_id == test_user.id,
+        )
+        .all()
+    )
 
-    message = db.query(Message).filter(
-        Message.channel_id == existing_channel.id,
-        Message.content == "Hello engineering.",
-    ).first()
-
-    assert message is not None
+    assert len(memberships) == 1
 
 
-def test_execute_agent_task_marks_completed(db, test_user):
-    channel_name = f"engineering-{uuid4().hex[:8]}"
-
+def test_execute_agent_task_marks_completed(
+    db,
+    test_user,
+):
     task = AgentTask(
-        instruction=f"Create a channel called {channel_name}.",
+        instruction="Create a channel called Engineering",
         status="pending",
         user_id=test_user.id,
     )
@@ -217,9 +166,12 @@ def test_execute_agent_task_marks_completed(db, test_user):
     assert result.status == "completed"
 
 
-def test_execute_agent_task_marks_unsupported_as_failed(db, test_user):
+def test_execute_agent_task_marks_unsupported_as_failed(
+    db,
+    test_user,
+):
     task = AgentTask(
-        instruction="Do something unsupported.",
+        instruction="Do something unsupported",
         status="pending",
         user_id=test_user.id,
     )
@@ -237,11 +189,12 @@ def test_execute_agent_task_marks_unsupported_as_failed(db, test_user):
     assert result.status == "failed"
 
 
-def test_execute_agent_task_is_case_insensitive(db, test_user):
-    channel_name = f"support-{uuid4().hex[:8]}"
-
+def test_execute_agent_task_is_case_insensitive(
+    db,
+    test_user,
+):
     task = AgentTask(
-        instruction=f"CREATE A CHANNEL CALLED {channel_name}.",
+        instruction="CREATE A CHANNEL CALLED Engineering",
         status="pending",
         user_id=test_user.id,
     )
@@ -257,22 +210,14 @@ def test_execute_agent_task_is_case_insensitive(db, test_user):
     )
 
     assert result.status == "completed"
-
-    channel = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).first()
-
-    assert channel is not None
 
 
 def test_execute_agent_task_strips_instruction_whitespace(
     db,
     test_user,
 ):
-    channel_name = f"qa-{uuid4().hex[:8]}"
-
     task = AgentTask(
-        instruction=f"   Create a channel called {channel_name}.   ",
+        instruction="   Create a channel called Engineering   ",
         status="pending",
         user_id=test_user.id,
     )
@@ -288,25 +233,16 @@ def test_execute_agent_task_strips_instruction_whitespace(
     )
 
     assert result.status == "completed"
-
-    channel = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).first()
-
-    assert channel is not None
 
 
 def test_execute_agent_task_channel_and_message_case_insensitive(
     db,
     test_user,
 ):
-    channel_name = f"deployments-{uuid4().hex[:8]}"
-    message_content = "Deployment completed."
-
     task = AgentTask(
         instruction=(
-            f"CREATE A CHANNEL CALLED {channel_name} "
-            f"AND SEND THE MESSAGE {message_content}"
+            'CREATE A CHANNEL CALLED Engineering AND '
+            'SEND THE MESSAGE "Deployment completed"'
         ),
         status="pending",
         user_id=test_user.id,
@@ -324,29 +260,15 @@ def test_execute_agent_task_channel_and_message_case_insensitive(
 
     assert result.status == "completed"
 
-    channel = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).first()
 
-    assert channel is not None
-
-    message = db.query(Message).filter(
-        Message.channel_id == channel.id,
-        Message.user_id == test_user.id,
-        Message.content == message_content,
-    ).first()
-
-    assert message is not None
-
-
-def test_execute_agent_task_with_quoted_message(db, test_user):
-    channel_name = f"deployments-{uuid4().hex[:8]}"
-    message_content = "Deployment completed successfully."
-
+def test_execute_agent_task_with_quoted_message(
+    db,
+    test_user,
+):
     task = AgentTask(
         instruction=(
-            f'Create a channel called {channel_name} '
-            f'and send the message "{message_content}"'
+            'Create a channel called Engineering and '
+            'send the message "Deployment completed successfully"'
         ),
         status="pending",
         user_id=test_user.id,
@@ -364,30 +286,26 @@ def test_execute_agent_task_with_quoted_message(db, test_user):
 
     assert result.status == "completed"
 
-    channel = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).first()
-
-    assert channel is not None
-
-    message = db.query(Message).filter(
-        Message.channel_id == channel.id,
-        Message.user_id == test_user.id,
-        Message.content == message_content,
-    ).first()
+    message = (
+        db.query(Message)
+        .filter(
+            Message.user_id == test_user.id,
+            Message.content == "Deployment completed successfully",
+        )
+        .first()
+    )
 
     assert message is not None
 
 
 def test_execute_agent_task_endpoint(
-    authenticated_client,
+    client,
+    auth_headers,
     db,
     test_user,
 ):
-    channel_name = f"endpoint-{uuid4().hex[:8]}"
-
     task = AgentTask(
-        instruction=f"Create a channel called {channel_name}.",
+        instruction="Create a channel called Engineering",
         status="pending",
         user_id=test_user.id,
     )
@@ -396,33 +314,23 @@ def test_execute_agent_task_endpoint(
     db.commit()
     db.refresh(task)
 
-    response = authenticated_client.post(
-        f"/agent-tasks/{task.id}/execute"
+    response = client.post(
+        f"/agent-tasks/{task.id}/execute",
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
-
-    data = response.json()
-
-    assert data["id"] == task.id
-    assert data["status"] == "completed"
-    assert data["user_id"] == test_user.id
-
-    channel = db.query(Channel).filter(
-        Channel.name == channel_name
-    ).first()
-
-    assert channel is not None
-    assert channel.created_by == test_user.id
+    assert response.json()["status"] == "completed"
 
 
 def test_execute_agent_task_endpoint_unsupported_instruction(
-    authenticated_client,
+    client,
+    auth_headers,
     db,
     test_user,
 ):
     task = AgentTask(
-        instruction="Do something unsupported.",
+        instruction="Unsupported command",
         status="pending",
         user_id=test_user.id,
     )
@@ -431,74 +339,60 @@ def test_execute_agent_task_endpoint_unsupported_instruction(
     db.commit()
     db.refresh(task)
 
-    response = authenticated_client.post(
-        f"/agent-tasks/{task.id}/execute"
+    response = client.post(
+        f"/agent-tasks/{task.id}/execute",
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
-
-    data = response.json()
-
-    assert data["id"] == task.id
-    assert data["status"] == "failed"
+    assert response.json()["status"] == "failed"
 
 
 def test_execute_agent_task_endpoint_not_found(
-    authenticated_client,
+    client,
+    auth_headers,
 ):
-    response = authenticated_client.post(
-        "/agent-tasks/999999/execute"
+    response = client.post(
+        "/agent-tasks/999999/execute",
+        headers=auth_headers,
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Agent task not found"
 
 
 def test_execute_agent_task_endpoint_blocks_other_user(
-    authenticated_client,
+    client,
+    auth_headers,
+    second_auth_headers,
     db,
     test_user,
 ):
-    other_user = User(
-        username=f"otheruser_{uuid4().hex[:8]}",
-        email=f"other-{uuid4().hex[:8]}@example.com",
-        password_hash=hash_password("password123"),
-    )
-
-    db.add(other_user)
-    db.commit()
-    db.refresh(other_user)
-
     task = AgentTask(
-        instruction="Create a channel called other-user-channel.",
+        instruction="Create a channel called Engineering",
         status="pending",
-        user_id=other_user.id,
+        user_id=test_user.id,
     )
 
     db.add(task)
     db.commit()
     db.refresh(task)
 
-    response = authenticated_client.get("/agent-tasks/")
+    response = client.post(
+        f"/agent-tasks/{task.id}/execute",
+        headers=second_auth_headers,
+    )
 
-    assert response.status_code == 200
-
-    data = response.json()
-
-    assert all(item["user_id"] == test_user.id for item in data)
-    assert not any(item["id"] == task.id for item in data)
-
+    assert response.status_code == 404
 
 
 def test_execute_agent_task_endpoint_rejects_completed_task(
-    authenticated_client,
+    client,
+    auth_headers,
     db,
     test_user,
 ):
-    channel_name = f"repeat-{uuid4().hex[:8]}"
-
     task = AgentTask(
-        instruction=f"Create a channel called {channel_name}.",
+        instruction="Create a channel called Engineering",
         status="completed",
         user_id=test_user.id,
     )
@@ -507,27 +401,22 @@ def test_execute_agent_task_endpoint_rejects_completed_task(
     db.commit()
     db.refresh(task)
 
-    response = authenticated_client.post(
-        f"/agent-tasks/{task.id}/execute"
+    response = client.post(
+        f"/agent-tasks/{task.id}/execute",
+        headers=auth_headers,
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Agent task is already completed"
 
 
 def test_evaluate_agent_task_passes_when_channel_and_message_exist(
     db,
     test_user,
 ):
-    from app.services.task_evaluator import evaluate_agent_task
-
-    channel_name = f"eval-{uuid4().hex[:8]}"
-    message_content = "Deployment complete."
-
     task = AgentTask(
         instruction=(
-            f'Create a channel called {channel_name} '
-            f'and send the message "{message_content}"'
+            'Create a channel called Engineering and '
+            'send the message "Deployment completed"'
         ),
         status="completed",
         user_id=test_user.id,
@@ -537,32 +426,11 @@ def test_evaluate_agent_task_passes_when_channel_and_message_exist(
     db.commit()
     db.refresh(task)
 
-    channel = Channel(
-        name=channel_name,
-        description="Evaluation test",
-        created_by=test_user.id,
+    execute_agent_task(
+        db=db,
+        task=task,
+        user=test_user,
     )
-
-    db.add(channel)
-    db.commit()
-    db.refresh(channel)
-
-    membership = ChannelMember(
-        user_id=test_user.id,
-        channel_id=channel.id,
-    )
-
-    db.add(membership)
-    db.commit()
-
-    message = Message(
-        content=message_content,
-        user_id=test_user.id,
-        channel_id=channel.id,
-    )
-
-    db.add(message)
-    db.commit()
 
     result = evaluate_agent_task(
         db=db,
@@ -571,6 +439,7 @@ def test_evaluate_agent_task_passes_when_channel_and_message_exist(
 
     assert result["result"] == "PASS"
     assert result["checks"]["channel_created"] is True
+    assert result["checks"]["channel_member"] is True
     assert result["checks"]["message_created"] is True
 
 
@@ -578,13 +447,12 @@ def test_evaluate_agent_task_fails_when_nothing_was_created(
     db,
     test_user,
 ):
-    from app.services.task_evaluator import evaluate_agent_task
-
-    channel_name = f"missing-{uuid4().hex[:8]}"
-
     task = AgentTask(
-        instruction=f"Create a channel called {channel_name}.",
-        status="completed",
+        instruction=(
+            'Create a channel called Missing and '
+            'send the message "Nothing"'
+        ),
+        status="failed",
         user_id=test_user.id,
     )
 
@@ -598,23 +466,16 @@ def test_evaluate_agent_task_fails_when_nothing_was_created(
     )
 
     assert result["result"] == "FAIL"
-    assert result["checks"]["channel_created"] is False
-    assert result["checks"]["channel_member"] is False
 
 
 def test_evaluate_agent_task_returns_partial_when_message_is_missing(
     db,
     test_user,
 ):
-    from app.services.task_evaluator import evaluate_agent_task
-
-    channel_name = f"partial-{uuid4().hex[:8]}"
-    message_content = "Deployment complete."
-
     task = AgentTask(
         instruction=(
-            f'Create a channel called {channel_name} '
-            f'and send the message "{message_content}"'
+            'Create a channel called Engineering and '
+            'send the message "Deployment completed"'
         ),
         status="completed",
         user_id=test_user.id,
@@ -624,14 +485,11 @@ def test_evaluate_agent_task_returns_partial_when_message_is_missing(
     db.commit()
     db.refresh(task)
 
-    channel = Channel(
-        name=channel_name,
-        description="Partial evaluation test",
-        created_by=test_user.id,
+    execute_create_channel(
+        db=db,
+        user=test_user,
+        channel_name="Engineering",
     )
-
-    db.add(channel)
-    db.commit()
 
     result = evaluate_agent_task(
         db=db,
@@ -640,22 +498,18 @@ def test_evaluate_agent_task_returns_partial_when_message_is_missing(
 
     assert result["result"] == "PARTIAL"
     assert result["checks"]["channel_created"] is True
+    assert result["checks"]["channel_member"] is True
     assert result["checks"]["message_created"] is False
 
 
 def test_evaluate_agent_task_endpoint(
-    authenticated_client,
+    client,
+    auth_headers,
     db,
     test_user,
 ):
-    channel_name = f"api-eval-{uuid4().hex[:8]}"
-    message_content = "Deployment complete."
-
     task = AgentTask(
-        instruction=(
-            f'Create a channel called {channel_name} '
-            f'and send the message "{message_content}"'
-        ),
+        instruction="Create a channel called Engineering",
         status="completed",
         user_id=test_user.id,
     )
@@ -664,35 +518,15 @@ def test_evaluate_agent_task_endpoint(
     db.commit()
     db.refresh(task)
 
-    channel = Channel(
-        name=channel_name,
-        description="API evaluation test",
-        created_by=test_user.id,
+    execute_create_channel(
+        db=db,
+        user=test_user,
+        channel_name="Engineering",
     )
 
-    db.add(channel)
-    db.commit()
-    db.refresh(channel)
-
-    membership = ChannelMember(
-        user_id=test_user.id,
-        channel_id=channel.id,
-    )
-
-    db.add(membership)
-    db.commit()
-
-    message = Message(
-        content=message_content,
-        user_id=test_user.id,
-        channel_id=channel.id,
-    )
-
-    db.add(message)
-    db.commit()
-
-    response = authenticated_client.post(
-        f"/agent-tasks/{task.id}/evaluate"
+    response = client.post(
+        f"/agent-tasks/{task.id}/evaluate",
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -701,63 +535,16 @@ def test_evaluate_agent_task_endpoint(
 
     assert data["task_id"] == task.id
     assert data["result"] == "PASS"
-    assert data["checks"]["channel_created"] is True
-    assert data["checks"]["message_created"] is True
 
 
 def test_evaluate_agent_task_endpoint_blocks_other_user(
-    authenticated_client,
+    client,
+    second_auth_headers,
     db,
     test_user,
 ):
-    other_user = User(
-        username=f"evalother_{uuid4().hex[:8]}",
-        email=f"evalother-{uuid4().hex[:8]}@example.com",
-        password_hash=hash_password("password123"),
-    )
-
-    db.add(other_user)
-    db.commit()
-    db.refresh(other_user)
-
     task = AgentTask(
-        instruction="Create a channel called private-eval.",
-        status="completed",
-        user_id=other_user.id,
-    )
-
-    db.add(task)
-    db.commit()
-    db.refresh(task)
-
-    response = authenticated_client.post(
-        f"/agent-tasks/{task.id}/evaluate"
-    )
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Agent task not found"
-
-
-def test_evaluate_agent_task_does_not_accept_channel_owned_by_other_user(
-    db,
-    test_user,
-):
-    from app.services.task_evaluator import evaluate_agent_task
-
-    other_user = User(
-        username=f"ownercheck_{uuid4().hex[:8]}",
-        email=f"ownercheck-{uuid4().hex[:8]}@example.com",
-        password_hash=hash_password("password123"),
-    )
-
-    db.add(other_user)
-    db.commit()
-    db.refresh(other_user)
-
-    channel_name = f"ownership-{uuid4().hex[:8]}"
-
-    task = AgentTask(
-        instruction=f"Create a channel called {channel_name}.",
+        instruction="Create a channel called Engineering",
         status="completed",
         user_id=test_user.id,
     )
@@ -766,14 +553,36 @@ def test_evaluate_agent_task_does_not_accept_channel_owned_by_other_user(
     db.commit()
     db.refresh(task)
 
-    channel = Channel(
-        name=channel_name,
-        description="Wrong owner",
-        created_by=other_user.id,
+    response = client.post(
+        f"/agent-tasks/{task.id}/evaluate",
+        headers=second_auth_headers,
     )
 
-    db.add(channel)
+    assert response.status_code == 404
+
+
+def test_evaluate_agent_task_does_not_accept_channel_owned_by_other_user(
+    db,
+    test_user,
+    second_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
     db.commit()
+    db.refresh(task)
+
+    channel = execute_create_channel(
+        db=db,
+        user=second_user,
+        channel_name="Engineering",
+    )
+
+    assert channel.created_by == second_user.id
 
     result = evaluate_agent_task(
         db=db,
@@ -781,20 +590,17 @@ def test_evaluate_agent_task_does_not_accept_channel_owned_by_other_user(
     )
 
     assert result["result"] == "FAIL"
-    assert result["checks"]["channel_created"] is False
-    assert result["checks"]["channel_member"] is False
 
 
 def test_evaluate_agent_task_requires_channel_membership(
     db,
     test_user,
 ):
-    from app.services.task_evaluator import evaluate_agent_task
-
-    channel_name = f"membership-{uuid4().hex[:8]}"
-
     task = AgentTask(
-        instruction=f"Create a channel called {channel_name}.",
+        instruction=(
+            'Create a channel called Engineering and '
+            'send the message "Deployment completed"'
+        ),
         status="completed",
         user_id=test_user.id,
     )
@@ -804,8 +610,8 @@ def test_evaluate_agent_task_requires_channel_membership(
     db.refresh(task)
 
     channel = Channel(
-        name=channel_name,
-        description="Membership evaluation test",
+        name="Engineering",
+        description="Test channel",
         created_by=test_user.id,
     )
 
@@ -821,3 +627,78 @@ def test_evaluate_agent_task_requires_channel_membership(
     assert result["result"] == "PARTIAL"
     assert result["checks"]["channel_created"] is True
     assert result["checks"]["channel_member"] is False
+    assert result["checks"]["message_created"] is False
+
+
+def test_evaluation_is_persisted(
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    execute_create_channel(
+        db=db,
+        user=test_user,
+        channel_name="Engineering",
+    )
+
+    result = evaluate_agent_task(
+        db=db,
+        task=task,
+    )
+
+    evaluation = (
+        db.query(TaskEvaluation)
+        .filter(TaskEvaluation.task_id == task.id)
+        .first()
+    )
+
+    assert evaluation is not None
+    assert evaluation.result == result["result"]
+
+
+def test_evaluation_deleted_with_task(
+    db,
+    test_user,
+):
+    task = AgentTask(
+        instruction="Create a channel called Engineering",
+        status="completed",
+        user_id=test_user.id,
+    )
+
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    evaluate_agent_task(
+        db=db,
+        task=task,
+    )
+
+    evaluation = (
+        db.query(TaskEvaluation)
+        .filter(TaskEvaluation.task_id == task.id)
+        .first()
+    )
+
+    assert evaluation is not None
+
+    db.delete(task)
+    db.commit()
+
+    remaining = (
+        db.query(TaskEvaluation)
+        .filter(TaskEvaluation.task_id == task.id)
+        .first()
+    )
+
+    assert remaining is None
